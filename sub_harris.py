@@ -53,7 +53,7 @@ def computeLocalMaximaHelper(harrisImage):
                          its 7x7 neighborhood.
         '''
         destImage = np.zeros_like(harrisImage, dtype=bool)
-        destImage = ((harrisImage == scipy.ndimage.maximum_filter(harrisImage, size=(5,5), mode="nearest")) & (harrisImage > 0))
+        destImage = ((harrisImage == scipy.ndimage.maximum_filter(harrisImage, size=(7, 7), mode="nearest")) & (harrisImage > 0))
 
         return destImage
 
@@ -79,7 +79,7 @@ def detectCorners(harrisImage, orientationImage, centers = np.array([None])):
         features = []
 
         mask = np.zeros_like(harrisImage, dtype = object).astype(int)
-        n = max(1, min(min(h, w) // 32, 20))
+        n = max(1, min(h, w) // 64)
         x = np.arange(-n, n + 1)
         y = np.arange(-n, n + 1)
         xv, yv = np.meshgrid(x, y)
@@ -109,24 +109,44 @@ def detectCorners(harrisImage, orientationImage, centers = np.array([None])):
         harrisMax = harrisImage[mask]
         orientationMax = orientationImage[mask]
         y, x = np.where(mask)
-        features = np.array([x, y, orientationMax, harrisMax]).T
+        features = np.array([y, x, orientationMax, harrisMax]).T
         return features
 
 def getHarrisWindow(srcImage, s, k, thres):
     # windows are points
     h, w = srcImage.shape[:2]
-    if (min(h,w) <= thres):
+    if (min(h, w) <= thres):
         # this gets all the centers of patches where we should recalculate Harris values for upsampled.
         y, x = np.indices(srcImage.shape)
         indices = np.stack((y.flatten(), x.flatten())).T
         harris, orientation, _ = computeHarrisValues(srcImage, indices)
         windows = detectCorners(harris, orientation)[:, :2].astype(int)
-        return windows
+        # srcImageColored = cv2.cvtColor(srcImage, cv2.COLOR_GRAY2BGR)
+        # for x, y in windows:
+        #     srcImageColored[x, y] = np.array([0, 0, 255])
 
+        # cv2.imwrite("sub_harris_base.png", srcImageColored)
+        # print("BASE")
+        # print(srcImage.shape)
+        # print(np.max(windows[:, 0]), np.max(windows[:, 1]))
+        return windows
     windows = getHarrisWindow(downsample(srcImage, s, k), s,  k, thres)*2
+    # print(srcImage.shape)
+    # print(np.max(windows[:, 0]), np.max(windows[:, 1]))
+    # srcImageColored = cv2.cvtColor(srcImage, cv2.COLOR_GRAY2BGR)
+    # for x, y in windows:
+    #     srcImageColored[max(0,x-1), y] = np.array([0, 0, 255])
+    #     srcImageColored[x, y] = np.array([0, 0, 255])
+    #     srcImageColored[min(h-1,x+1), y] = np.array([0, 0, 255])
+    #     srcImageColored[x, max(0,y-1)] = np.array([0, 0, 255])
+    #     srcImageColored[x, min(w-1,y+1)] = np.array([0, 0, 255])
+
+
+    # cv2.imwrite("sub_harris_" + str(min(h,w)) + ".png", srcImageColored)
     harris, orientation, centers = computeHarrisValues(srcImage, windows)
 
-    return detectCorners(harris, orientation, centers)[:, :2].astype(int)
+    detectors = detectCorners(harris, orientation, centers)[:, :2].astype(int)
+    return detectors
 
 def computeHarrisValues(srcImage, windows):
         '''
@@ -156,7 +176,7 @@ def computeHarrisValues(srcImage, windows):
         trace = lambda M : M[0,0] + M[1,1]
 
         # make 7 x 7 window around windows points
-        n = max(1, min(min(h, w) // 32, 20))
+        n = max(1, min(h, w) // 64)
         x = np.arange(-n, n + 1)
         y = np.arange(-n, n + 1)
         xv, yv = np.meshgrid(x, y)
@@ -167,37 +187,27 @@ def computeHarrisValues(srcImage, windows):
         windows = windows.reshape(-1, 2)
         windows = windows[((windows[:, 0] >= 0) & (windows[:, 0] < srcImage.shape[0]) &
                            (windows[:, 1] >= 0) & (windows[:, 1] < srcImage.shape[1]))]
-
         mask = np.zeros_like(srcImage, dtype=bool)
         mask[windows[:, 0], windows[:, 1]] = True
-        
+
         img = np.array([[np.where(mask, scipy.ndimage.convolve(img_deriv(srcImage)[0, 0], gauss), srcImage), np.where(mask, scipy.ndimage.convolve(img_deriv(srcImage)[0, 1], gauss), srcImage)],
                         [np.where(mask, scipy.ndimage.convolve(img_deriv(srcImage)[1, 0], gauss), srcImage), np.where(mask, scipy.ndimage.convolve(img_deriv(srcImage)[1, 1], gauss), srcImage)]])
-
         # get the maximum harrisImage value within each window
         harrisImage = det(img) - 0.1 * (trace(img) ** 2)
 
         orientationImage = np.degrees(np.arctan2(sobel(srcImage, 0), sobel(srcImage, 1)))
         return harrisImage, orientationImage, centers
 
+def displayCorners(srcImage, s, k):
+    h, w = srcImage.shape
+    srcImageColored = cv2.cvtColor(srcImage, cv2.COLOR_GRAY2BGR)
+    detector = getHarrisWindow(img, s, k, max(100, min(h,w) // 3)).astype(int)
+    for x, y in detector:
+        cv2.rectangle(srcImageColored, (y-2,x-2), (y+2,x+2), color=(0, 0, 255), thickness = -1)
+
+    cv2.imwrite("sub_harris.png", srcImageColored)
+
 s, k = 2, 5
-img = cv2.imread("sobel.png")
-
+img = cv2.imread("resources/img1.png")
 img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-
-# img = downsample(img, s, k)
-# img = downsample(img, s, k)
-# print(img.shape)
-
-# cv2.imwrite("tri.png", img)
-
-# print(np.min(img.shape[:2])//5)
-imagg = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
-
-detector = getHarrisWindow(img, s, k, np.min(img.shape[:2])//5).astype(int)
-print(len(detector))
-
-for x, y in detector:
-    cv2.circle(imagg, [x,y], radius = 5, color = (0, 0, 255), thickness = -1)
-
-cv2.imwrite("harris.png", imagg)
+displayCorners(img, s, k)
