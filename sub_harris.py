@@ -1,9 +1,74 @@
+print("A")
 import math
 import cv2
 import numpy as np
 import scipy
 from scipy import ndimage, spatial
 np.set_printoptions(suppress=True)
+print("JKKJKJJKKJLLJLJLJLLJKLJLJK")
+
+def get_rot_mx(angle):
+    '''
+    Input:
+        angle -- Rotation angle in radians
+    Output:
+        A 3x3 numpy array representing 2D rotations.
+    '''
+    return np.array([
+        [np.cos(angle), -np.sin(angle), 0],
+        [np.sin(angle), np.cos(angle), 0],
+        [0, 0, 1]
+    ])
+
+def get_trans_mx(trans_vec):
+    '''
+    Input:
+        trans_vec -- Translation vector represented by an 1D numpy array with 2
+        elements
+    Output:
+        A 3x3 numpy array representing 2D translation.
+    '''
+    assert trans_vec.ndim == 1
+    assert trans_vec.shape[0] == 2
+
+    return np.array([
+        [1, 0, trans_vec[0]],
+        [0, 1, trans_vec[1]],
+        [0, 0, 1]
+    ])
+
+def get_scale_mx(s_x, s_y):
+    '''
+    Input:
+        s_x -- Scaling along the x axis
+        s_y -- Scaling along the y axis
+    Output:
+        A 3x3 numpy array representing 2D scaling.
+    '''
+    return np.array([
+        [s_x, 0, 0],
+        [0, s_y, 0],
+        [0, 0, 1]
+    ])
+
+
+## Helper functions ############################################################
+
+def inbounds(shape, indices):
+    '''
+        Input:
+            shape -- int tuple containing the shape of the array
+            indices -- int list containing the indices we are trying 
+                       to access within the array
+        Output:
+            True/False, depending on whether the indices are within the bounds of 
+            the array with the given shape
+    '''
+    assert len(shape) == len(indices)
+    for i, ind in enumerate(indices):
+        if ind < 0 or ind >= shape[i]:
+            return False
+    return True
 
 def gaussian_blur_kernel_2d(sigma, height, width):
     '''Return a Gaussian blur kernel of the given dimensions and with the given
@@ -38,7 +103,7 @@ def downsample(srcImage, s, k):
     srcImage = scipy.ndimage.convolve(srcImage, gauss)
 
     blocks = srcImage.reshape(h // s, s, w // s, s).transpose(0, 2, 1, 3)
-    return np.mean(blocks, axis = (2, 3)).astype(np.uint8)
+    return np.mean(blocks, axis = (2, 3))
 
 
 def computeLocalMaximaHelper(harrisImage):
@@ -53,7 +118,7 @@ def computeLocalMaximaHelper(harrisImage):
                          its 7x7 neighborhood.
         '''
         destImage = np.zeros_like(harrisImage, dtype=bool)
-        destImage = ((harrisImage == scipy.ndimage.maximum_filter(harrisImage, size=(7, 7), mode="nearest")) & (harrisImage > 0))
+        destImage = ((harrisImage == scipy.ndimage.maximum_filter(harrisImage, size=(7, 7), mode="nearest")) & (harrisImage != 0))
 
         return destImage
 
@@ -108,8 +173,8 @@ def detectCorners(harrisImage, orientationImage, centers = np.array([None])):
 
         harrisMax = harrisImage[mask]
         orientationMax = orientationImage[mask]
-        y, x = np.where(mask)
-        features = np.array([y, x, orientationMax, harrisMax]).T
+        x, y = np.where(mask)
+        features = np.array([x, y, orientationMax, harrisMax]).T
         return features
 
 def getHarrisWindow(srcImage, s, k, thres):
@@ -120,32 +185,12 @@ def getHarrisWindow(srcImage, s, k, thres):
         y, x = np.indices(srcImage.shape)
         indices = np.stack((y.flatten(), x.flatten())).T
         harris, orientation, _ = computeHarrisValues(srcImage, indices)
-        windows = detectCorners(harris, orientation)[:, :2].astype(int)
-        # srcImageColored = cv2.cvtColor(srcImage, cv2.COLOR_GRAY2BGR)
-        # for x, y in windows:
-        #     srcImageColored[x, y] = np.array([0, 0, 255])
-
-        # cv2.imwrite("sub_harris_base.png", srcImageColored)
-        # print("BASE")
-        # print(srcImage.shape)
-        # print(np.max(windows[:, 0]), np.max(windows[:, 1]))
+        windows = detectCorners(harris, orientation)
         return windows
+    
     windows = getHarrisWindow(downsample(srcImage, s, k), s,  k, thres)*2
-    # print(srcImage.shape)
-    # print(np.max(windows[:, 0]), np.max(windows[:, 1]))
-    # srcImageColored = cv2.cvtColor(srcImage, cv2.COLOR_GRAY2BGR)
-    # for x, y in windows:
-    #     srcImageColored[max(0,x-1), y] = np.array([0, 0, 255])
-    #     srcImageColored[x, y] = np.array([0, 0, 255])
-    #     srcImageColored[min(h-1,x+1), y] = np.array([0, 0, 255])
-    #     srcImageColored[x, max(0,y-1)] = np.array([0, 0, 255])
-    #     srcImageColored[x, min(w-1,y+1)] = np.array([0, 0, 255])
-
-
-    # cv2.imwrite("sub_harris_" + str(min(h,w)) + ".png", srcImageColored)
     harris, orientation, centers = computeHarrisValues(srcImage, windows)
-
-    detectors = detectCorners(harris, orientation, centers)[:, :2].astype(int)
+    detectors = detectCorners(harris, orientation, centers)
     return detectors
 
 def computeHarrisValues(srcImage, windows):
@@ -160,6 +205,7 @@ def computeHarrisValues(srcImage, windows):
                                 gradient at each pixel in degrees.
         '''
         # compute harris values only on the windows returned by ... 7 by 7 window
+        windows = windows[:, :2].astype(int)
         h, w = srcImage.shape[:2]
   
         harrisImage = np.zeros(srcImage.shape[:2])
@@ -175,39 +221,144 @@ def computeHarrisValues(srcImage, windows):
         det = lambda M : M[0,0] * M[1,1] - M[0,1] * M[1,0]
         trace = lambda M : M[0,0] + M[1,1]
 
-        # make 7 x 7 window around windows points
-        n = max(1, min(h, w) // 64)
-        x = np.arange(-n, n + 1)
-        y = np.arange(-n, n + 1)
-        xv, yv = np.meshgrid(x, y)
-        offsets = np.stack((xv.ravel(), yv.ravel()), axis=-1)
-
         centers = windows
-        windows = windows[:, None, :] + offsets[None, :, :]
-        windows = windows.reshape(-1, 2)
-        windows = windows[((windows[:, 0] >= 0) & (windows[:, 0] < srcImage.shape[0]) &
-                           (windows[:, 1] >= 0) & (windows[:, 1] < srcImage.shape[1]))]
+
+        if (srcImage.shape[0] * srcImage.shape[1] != windows.shape[0]):
+            # make 7 x 7 window around windows points
+            n = max(1, min(h, w) // 64)
+            x = np.arange(-n, n + 1)
+            y = np.arange(-n, n + 1)
+            xv, yv = np.meshgrid(x, y)
+            offsets = np.stack((xv.ravel(), yv.ravel()), axis=-1)
+
+            windows = windows[:, None] + offsets[None, :]
+            windows = windows.reshape(-1, 2)
+            windows = windows[((windows[:, 0] >= 0) & (windows[:, 0] < srcImage.shape[0]) &
+                            (windows[:, 1] >= 0) & (windows[:, 1] < srcImage.shape[1]))]
+            
         mask = np.zeros_like(srcImage, dtype=bool)
         mask[windows[:, 0], windows[:, 1]] = True
-
         img = np.array([[np.where(mask, scipy.ndimage.convolve(img_deriv(srcImage)[0, 0], gauss), srcImage), np.where(mask, scipy.ndimage.convolve(img_deriv(srcImage)[0, 1], gauss), srcImage)],
                         [np.where(mask, scipy.ndimage.convolve(img_deriv(srcImage)[1, 0], gauss), srcImage), np.where(mask, scipy.ndimage.convolve(img_deriv(srcImage)[1, 1], gauss), srcImage)]])
         # get the maximum harrisImage value within each window
         harrisImage = det(img) - 0.1 * (trace(img) ** 2)
 
-        orientationImage = np.degrees(np.arctan2(sobel(srcImage, 0), sobel(srcImage, 1)))
+        orientationImage = np.degrees(np.arctan2(sobel(srcImage, 1), sobel(srcImage, 0)))
         return harrisImage, orientationImage, centers
 
-def displayCorners(srcImage, s, k):
+def detect(srcImage, s, k, thres):
     h, w = srcImage.shape
+    return getHarrisWindow(srcImage, s, k, max(50, thres))
+    
+def displayCorners(srcImage, s, k, thres, c):
     srcImageColored = cv2.cvtColor(srcImage, cv2.COLOR_GRAY2BGR)
-    detector = getHarrisWindow(img, s, k, max(100, min(h,w) // 3)).astype(int)
-    for x, y in detector:
-        cv2.rectangle(srcImageColored, (y-2,x-2), (y+2,x+2), color=(0, 0, 255), thickness = -1)
+    detector = getHarrisWindow(srcImage, s, k, max(50, thres))[:, :2].astype(int)
+    for y, x in detector:
+        cv2.rectangle(srcImageColored, (x-2,y-2), (x+2,y+2), color=c, thickness = -1)
 
-    cv2.imwrite("sub_harris.png", srcImageColored)
+    return srcImageColored
 
-s, k = 2, 5
-img = cv2.imread("resources/img1.png")
-img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-displayCorners(img, s, k)
+
+## Compute MOPS Descriptors ############################################################
+def computeMOPSDescriptors(image, features):
+    """"
+    Input:
+        image -- Grayscale input image in a numpy array with
+                values in [0, 1]. The dimensions are (rows, cols).
+        features -- the detected features, we have to compute the feature
+                    descriptors at the specified coordinates
+    Output:
+        desc -- K x W^2 numpy array, where K is the number of features
+                and W is the window size
+    """
+    image = image.astype(np.float32)
+    image /= 255.
+    # This image represents the window around the feature you need to
+    # compute to store as the feature descriptor (row-major)
+    windowSize = 8
+    desc = np.zeros((len(features), windowSize * windowSize))
+    grayImage = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    grayImage = ndimage.gaussian_filter(grayImage, 0.5)
+
+    for i, f in enumerate(features):
+        transMx = np.zeros((2, 3))
+
+        # TODO 4: Compute the transform as described by the feature
+        # location/orientation and store in 'transMx.' You will need
+        # to compute the transform from each pixel in the 40x40 rotated
+        # window surrounding the feature to the appropriate pixels in
+        # the 8x8 feature descriptor image. 'transformations.py' has
+        # helper functions that might be useful
+        # Note: use grayImage to compute features on, not the input image
+        
+        # TODO-BLOCK-BEGIN
+        x, y, angle, score = f
+        M_t1 = get_trans_mx(np.array([-x, -y]))
+        M_r = get_rot_mx(-np.radians(angle))
+        M_s = get_scale_mx(1/5, 1/5)
+        M_t2 = get_trans_mx(np.array([4, 4]))
+        transMx = (M_t2 @ M_s @ M_r @ M_t1)[:2]
+        # TODO-BLOCK-END
+
+        # Call the warp affine function to do the mapping
+        # It expects a 2x3 matrix
+        destImage = cv2.warpAffine(grayImage, transMx, (windowSize, windowSize), flags=cv2.INTER_LINEAR)
+
+        # TODO 5: Normalize the descriptor to have zero mean and unit
+        # variance. If the variance is negligibly small (which we
+        # define as less than 1e-10) then set the descriptor
+        # vector to zero. Lastly, write the vector to desc.
+        # TODO-BLOCK-BEGIN
+        destImage = destImage- np.mean(destImage)
+        desc[i] = (destImage/np.std(destImage) if np.var(destImage) >= 1e-10 else np.zeros(destImage.shape)).flatten()
+        # TODO-BLOCK-END
+
+    return desc
+
+## Compute Matches ############################################################
+def produceMatches(desc_img1, desc_img2):
+    """
+    Input:
+        desc_img1 -- corresponding set of MOPS descriptors for image 1
+        desc_img2 -- corresponding set of MOPS descriptors for image 2
+
+    Output:
+        matches -- list of all matches. Entries should 
+        take the following form:
+        (index_img1, index_img2, score)
+
+        index_img1: the index in corners_img1 and desc_img1 that is being matched
+        index_img2: the index in corners_img2 and desc_img2 that is being matched
+        score: the scalar difference between the points as defined
+                    via the ratio test
+    """
+    matches = []
+    assert desc_img1.ndim == 2
+    assert desc_img2.ndim == 2
+    assert desc_img1.shape[1] == desc_img2.shape[1]
+
+    if desc_img1.shape[0] == 0 or desc_img2.shape[0] == 0:
+        return []
+
+    # TODO 6: Perform ratio feature matching.
+    # This uses the ratio of the SSD distance of the two best matches
+    # and matches a feature in the first image with the closest feature in the
+    # second image. If the SSD distance is negligibly small, in this case less 
+    # than 1e-5, then set the distance to 1. If there are less than two features,
+    # set the distance to 0.
+    # Note: multiple features from the first image may match the same
+    # feature in the second image.
+    # TODO-BLOCK-BEGIN
+    # match first with second
+    for i, desc_1 in enumerate(desc_img1):
+        if desc_img2.shape[0] < 2:
+            fst = 0
+            ratio = 0
+        else:
+            ssd = np.sum((desc_1[:3] - desc_img2[:, :3]) ** 2, axis = 1)
+            fst, snd = np.argpartition(ssd, 2)[:2]
+            ratio = ssd[fst]/ssd[snd] if ssd[snd] >= 1e-5 else 1
+        matches.append((i, fst, ratio))
+    # TODO-BLOCK-END
+
+    return matches
