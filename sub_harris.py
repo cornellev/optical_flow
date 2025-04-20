@@ -1,11 +1,9 @@
-print("A")
 import math
 import cv2
 import numpy as np
 import scipy
 from scipy import ndimage, spatial
 np.set_printoptions(suppress=True)
-print("JKKJKJJKKJLLJLJLJLLJKLJLJK")
 
 def get_rot_mx(angle):
     '''
@@ -173,6 +171,7 @@ def detectCorners(harrisImage, orientationImage, centers = np.array([None])):
 
         harrisMax = harrisImage[mask]
         orientationMax = orientationImage[mask]
+        # row x is point on y-axis, col y is point on x-axis
         x, y = np.where(mask)
         features = np.array([x, y, orientationMax, harrisMax]).T
         return features
@@ -254,6 +253,7 @@ def displayCorners(srcImage, s, k, thres, c):
     srcImageColored = cv2.cvtColor(srcImage, cv2.COLOR_GRAY2BGR)
     detector = getHarrisWindow(srcImage, s, k, max(50, thres))[:, :2].astype(int)
     for y, x in detector:
+        # we flip x and y because pixels are represented by [row, col], where row = y-axis, col = x-axis
         cv2.rectangle(srcImageColored, (x-2,y-2), (x+2,y+2), color=c, thickness = -1)
 
     return srcImageColored
@@ -276,43 +276,55 @@ def computeMOPSDescriptors(image, features):
     # This image represents the window around the feature you need to
     # compute to store as the feature descriptor (row-major)
     windowSize = 8
-    desc = np.zeros((len(features), windowSize * windowSize))
+
+    image = np.pad(image, ((windowSize, windowSize), (windowSize, windowSize), (0, 0)), mode='edge')
+    desc = np.zeros((len(features), windowSize * windowSize * 3))
     grayImage = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     grayImage = ndimage.gaussian_filter(grayImage, 0.5)
+
+    image = ndimage.gaussian_filter(image, 1)
+    red = image[:, :, 0]
+    green = image[:, :, 1]
+    blue = image[:, :, 2]
 
     for i, f in enumerate(features):
         transMx = np.zeros((2, 3))
 
-        # TODO 4: Compute the transform as described by the feature
-        # location/orientation and store in 'transMx.' You will need
-        # to compute the transform from each pixel in the 40x40 rotated
-        # window surrounding the feature to the appropriate pixels in
-        # the 8x8 feature descriptor image. 'transformations.py' has
-        # helper functions that might be useful
-        # Note: use grayImage to compute features on, not the input image
-        
         # TODO-BLOCK-BEGIN
         x, y, angle, score = f
-        M_t1 = get_trans_mx(np.array([-x, -y]))
-        M_r = get_rot_mx(-np.radians(angle))
-        M_s = get_scale_mx(1/5, 1/5)
-        M_t2 = get_trans_mx(np.array([4, 4]))
-        transMx = (M_t2 @ M_s @ M_r @ M_t1)[:2]
+        M_t1 = get_trans_mx(np.array([-y + windowSize/2, -x + windowSize/2]))
+        # M_r = np.vstack([cv2.getRotationMatrix2D((windowSize/2, windowSize/2), 90.-angle, 1/5), [0., 0., 1.]])
+        M_r = np.vstack([cv2.getRotationMatrix2D((windowSize/2, windowSize/2), 0., 1/5), [0., 0., 1.]])
+
+        transMx = (M_r @ M_t1)[:2]
         # TODO-BLOCK-END
 
         # Call the warp affine function to do the mapping
         # It expects a 2x3 matrix
-        destImage = cv2.warpAffine(grayImage, transMx, (windowSize, windowSize), flags=cv2.INTER_LINEAR)
+        # destImage = cv2.warpAffine(grayImage, transMx, (windowSize, windowSize), flags=cv2.INTER_LINEAR)
+        destImageR = cv2.warpAffine(red, transMx, (windowSize, windowSize), flags=cv2.INTER_LINEAR)
+        destImageG = cv2.warpAffine(green, transMx, (windowSize, windowSize), flags=cv2.INTER_LINEAR)
+        destImageB = cv2.warpAffine(blue, transMx, (windowSize, windowSize), flags=cv2.INTER_LINEAR)
+
+        rgb_image = np.stack((destImageB, destImageG, destImageR), axis=-1)
 
         # TODO 5: Normalize the descriptor to have zero mean and unit
         # variance. If the variance is negligibly small (which we
         # define as less than 1e-10) then set the descriptor
         # vector to zero. Lastly, write the vector to desc.
         # TODO-BLOCK-BEGIN
-        destImage = destImage- np.mean(destImage)
-        desc[i] = (destImage/np.std(destImage) if np.var(destImage) >= 1e-10 else np.zeros(destImage.shape)).flatten()
-        # TODO-BLOCK-END
+        # destImage = destImage - np.mean(destImage)
+        destImageR = destImageR - np.mean(destImageR)
+        destImageG = destImageG - np.mean(destImageG)
+        destImageB = destImageB - np.mean(destImageB)
 
+        destImageR = destImageR/np.std(destImageR)
+        destImageG = destImageG/np.std(destImageG)
+        destImageB = destImageB/np.std(destImageB)
+
+        desc[i] = np.vstack([destImageR, destImageG, destImageB]).flatten()
+        # desc[i] = (destImage/np.std(destImage) if np.var(destImage) >= 1e-10 else np.zeros(destImage.shape)).flatten()
+        # TODO-BLOCK-END
     return desc
 
 ## Compute Matches ############################################################
@@ -355,7 +367,7 @@ def produceMatches(desc_img1, desc_img2):
             fst = 0
             ratio = 0
         else:
-            ssd = np.sum((desc_1[:3] - desc_img2[:, :3]) ** 2, axis = 1)
+            ssd = np.sum((desc_1 - desc_img2) ** 2, axis = 1)
             fst, snd = np.argpartition(ssd, 2)[:2]
             ratio = ssd[fst]/ssd[snd] if ssd[snd] >= 1e-5 else 1
         matches.append((i, fst, ratio))
