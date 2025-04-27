@@ -5,6 +5,43 @@ import scipy
 from scipy import ndimage, spatial
 np.set_printoptions(suppress=True)
 
+fx_l=699.41
+fy_l=699.365
+cx_l=652.8
+cy_l=358.133
+k1_l=-0.170704
+k2_l=0.0249542
+p1_l=9.55189e-05
+p2_l=-0.000109509
+k3_l=-9.96888e-11
+
+# [RIGHT_CAM_HD]
+fx_r=697.635
+fy_r=697.63
+cx_r=671.665
+cy_r=354.611
+k1_r=-0.171533
+k2_r=0.0258402
+p1_r=7.86599e-05
+p2_r=-0.000136126
+k3_r=-2.87251e-10
+
+Baseline=119.905
+TY=0.0458908
+TZ=-0.467919
+CV_2K=0.00697667
+RX_2K=0.00239722
+RZ_2K=-0.0021326
+
+# Canera matrices.
+K_L = np.array([[fx_l, 0, cx_l], [0, fy_l, cy_l], [0, 0, 1]])
+K_R = np.array([[fx_r, 0, cx_r], [0, fy_r, cy_r], [0, 0, 1]])
+T = np.array([Baseline, TY, TZ])
+R, _ = cv2.Rodrigues(np.array([RX_2K, CV_2K, RZ_2K]))
+T_x = np.array([[0, -TZ, TY], [TZ, 0, -Baseline], [-TY, Baseline, 0]])
+E = T_x @ R
+W = np.array([[0, -1, 0], [1, 0, 0], [0, 0, 1]])
+
 def get_rot_mx(angle):
     '''
     Input:
@@ -121,7 +158,7 @@ def computeLocalMaximaHelper(harrisImage):
         return destImage
 
 
-def detectCorners(harrisImage, orientationImage, centers = np.array([None])):
+def dCorners(harrisImage, orientationImage, centers = np.array([None])):
         '''
         Input:
             harrisImage -- numpy array containing the Harris score at
@@ -374,3 +411,36 @@ def produceMatches(desc_img1, desc_img2):
     # TODO-BLOCK-END
 
     return matches
+
+def depth_cluster(depth_map, scale):
+    """
+    @param depth_map : cv2.imread('resources/neural.png', cv2.IMREAD_COLOR)
+    """
+
+    depth_map = cv2.cvtColor(depth_map, cv2.COLOR_BGR2GRAY).astype(int)
+    depth_map = np.minimum(np.maximum(0, (depth_map - 10))*5, 255).astype(np.uint8)
+    depth_map = cv2.cvtColor(depth_map, cv2.COLOR_GRAY2RGB)
+    depth_map = cv2.resize(depth_map, (int(depth_map.shape[1] / scale), int(depth_map.shape[0] / scale)), interpolation=cv2.INTER_AREA)
+
+    cv2.imwrite("contrast.png", depth_map)
+    # get depth from depth_map -> use euclidean clustering 
+    cloud = depth_cluster(depth_map, depth_map)
+
+    h, w = depth_map.shape[:2]
+    point_cloud = np.zeros((h, w, 4))
+
+    u, v = np.meshgrid(np.arange(w), np.arange(h))
+    u = u.flatten()
+    v = v.flatten()
+
+    max_depth = 35
+
+    # 将像素坐标变换为相机坐标
+    z = (cv2.cvtColor(depth_map, cv2.COLOR_BGR2GRAY).astype(np.float32) + 1e-02) / 255.0 * max_depth
+    z = z.flatten()
+
+    x = (u - cx_l) * z / fx_l
+    y = (v - cy_l) * z / fy_l
+
+    point_cloud = np.stack((u, v, z, z), axis = 1)
+    return point_cloud.reshape(h*w, 4)
